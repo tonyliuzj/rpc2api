@@ -1,0 +1,30 @@
+{
+  "name": "rpc2api",
+  "version": "1.0.0",
+  "description": "Node.js web service that polls a Komari JSON-RPC2 API and exposes HTTP status based on node health",
+  "keywords": [
+    "rpc",
+    "api",
+    "polling",
+    "health-check"
+  ],
+  "homepage": "https://github.com/tonyliuzj/rpc2api#readme",
+  "bugs": {
+    "url": "https://github.com/tonyliuzj/rpc2api/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tonyliuzj/rpc2api.git"
+  },
+  "license": "MIT",
+  "author": "tonyliuzj",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1"
+  }
+}
