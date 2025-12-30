@@ -26,6 +26,15 @@ Instead of making individual JSON-RPC2 calls to check each node's status, this s
 
 ## Installation
 
+Clone the repository:
+
+```bash
+git clone https://github.com/tonyliuzj/rpc2api.git
+cd rpc2api
+```
+
+Install dependencies:
+
 ```bash
 npm install
 ```
