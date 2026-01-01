@@ -10,6 +10,7 @@ const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '5000', 10);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const API_KEY = process.env.API_KEY;
 const COOKIE = process.env.COOKIE;
+const IGNORE_GROUPS = process.env.IGNORE_GROUPS ? process.env.IGNORE_GROUPS.split(',').map(g => g.trim()) : [];
 
 // Validate required configuration
 if (!BASE_API_URL) {
@@ -27,7 +28,9 @@ let latestPollData = {
     totalNodes: 0,
     onlineCount: 0,
     offlineCount: 0,
-    offlineUuids: []
+    offlineUuids: [],
+    ignoredCount: 0,
+    ignoredUuids: []
   },
   computedBaseStatus: 503 // Default to 503 until first poll completes
 };
@@ -44,10 +47,6 @@ async function pollUpstreamAPI() {
   latestPollData.fetchError = null;
 
   try {
-    // Create abort controller for 5 second timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
     // Prepare headers
     const headers = {
       'Content-Type': 'application/json'
@@ -61,20 +60,55 @@ async function pollUpstreamAPI() {
       headers['Cookie'] = COOKIE;
     }
 
-    // Make the JSON-RPC2 request
-    const response = await fetch(rpcEndpoint, {
+    // Step 1: Fetch node group information from common:getNodes
+    const controller1 = new AbortController();
+    const timeoutId1 = setTimeout(() => controller1.abort(), 5000);
+
+    const nodesResponse = await fetch(rpcEndpoint, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: 1,
+        method: 'common:getNodes',
+        params: {}
+      }),
+      signal: controller1.signal
+    });
+
+    clearTimeout(timeoutId1);
+
+    // Build a map of uuid -> group from common:getNodes
+    const nodeGroupMap = {};
+    if (nodesResponse.status === 200) {
+      const nodesData = await nodesResponse.json();
+      if (nodesData.result && typeof nodesData.result === 'object') {
+        for (const uuid in nodesData.result) {
+          const node = nodesData.result[uuid];
+          if (node.group) {
+            nodeGroupMap[uuid] = node.group;
+          }
+        }
+      }
+    }
+
+    // Step 2: Fetch node status from common:getNodesLatestStatus
+    const controller2 = new AbortController();
+    const timeoutId2 = setTimeout(() => controller2.abort(), 5000);
+
+    const response = await fetch(rpcEndpoint, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
         method: 'common:getNodesLatestStatus',
         params: {}
       }),
-      signal: controller.signal
+      signal: controller2.signal
     });
 
-    clearTimeout(timeoutId);
+    clearTimeout(timeoutId2);
 
     latestPollData.upstreamHttpStatus = response.status;
     latestPollData.lastCheckedAt = startTime.toISOString();
@@ -146,9 +180,18 @@ async function pollUpstreamAPI() {
       // Count online/offline nodes
       let onlineCount = 0;
       const offlineUuids = [];
+      const ignoredUuids = [];
 
       for (const uuid of uuids) {
         const node = result[uuid];
+
+        // Check if node's group should be ignored using the nodeGroupMap
+        const nodeGroup = nodeGroupMap[uuid];
+        if (IGNORE_GROUPS.length > 0 && nodeGroup && IGNORE_GROUPS.includes(nodeGroup)) {
+          ignoredUuids.push(uuid);
+          continue; // Skip this node
+        }
+
         if (node.online === true) {
           onlineCount++;
         } else {
@@ -156,17 +199,24 @@ async function pollUpstreamAPI() {
         }
       }
 
-      const offlineCount = totalNodes - onlineCount;
+      const consideredNodes = totalNodes - ignoredUuids.length;
+      const offlineCount = consideredNodes - onlineCount;
 
       latestPollData.nodesOnlineSummary = {
         totalNodes,
         onlineCount,
         offlineCount,
-        offlineUuids
+        offlineUuids,
+        ignoredCount: ignoredUuids.length,
+        ignoredUuids
       };
 
-      // Determine status: 200 only if ALL nodes are online
-      if (onlineCount === totalNodes) {
+      // Determine status: 200 only if ALL considered nodes are online
+      if (consideredNodes === 0) {
+        // All nodes are ignored
+        latestPollData.computedBaseStatus = 503;
+        logPollResult('all_nodes_ignored');
+      } else if (onlineCount === consideredNodes) {
         latestPollData.computedBaseStatus = 200;
         logPollResult('all_online');
       } else {
@@ -274,6 +324,7 @@ app.listen(PORT, () => {
   console.log(`  - POLL_INTERVAL_MS: ${POLL_INTERVAL_MS}`);
   console.log(`  - API_KEY: ${API_KEY ? '***set***' : 'not set'}`);
   console.log(`  - COOKIE: ${COOKIE ? '***set***' : 'not set'}`);
+  console.log(`  - IGNORE_GROUPS: ${IGNORE_GROUPS.length > 0 ? IGNORE_GROUPS.join(', ') : 'none'}`);
   console.log('');
 
   // Start polling

@@ -64,7 +64,27 @@ PORT=3000
 
 # Optional: Cookie for cookie-based authentication
 # COOKIE=session=your_session_cookie_here
+
+# Optional: Comma-separated list of group names to ignore
+# Nodes in these groups will be excluded from status calculations
+# IGNORE_GROUPS=maintenance,testing
 ```
+
+### IGNORE_GROUPS Feature
+
+The `IGNORE_GROUPS` configuration allows you to exclude specific groups of nodes from health status calculations. This is useful when:
+- Nodes are under maintenance
+- Testing nodes that shouldn't affect production status
+- Temporarily excluding problematic nodes without removing them
+
+**How it works:**
+- Specify group names as a comma-separated list (e.g., `IGNORE_GROUPS=maintenance,testing`)
+- Any node with a `group` field matching one of these names will be ignored
+- Ignored nodes are excluded from online/offline counts
+- The service returns 200 only if all **non-ignored** nodes are online
+- Ignored nodes are tracked separately in the response (`ignoredCount`, `ignoredUuids`)
+
+**Example:** If you have 10 nodes total, 2 in the "maintenance" group (offline), and 8 others (all online), setting `IGNORE_GROUPS=maintenance` will result in HTTP 200 status instead of 503.
 
 ## Running the Service
 
@@ -152,12 +172,14 @@ Follow the instructions provided by the `pm2 startup` command (it will give you 
 Main status endpoint. Returns HTTP status code based on latest poll result.
 
 **Status Code Rules:**
-- `200` - All nodes are online (onlineCount === totalNodes > 0)
-- `503` - At least one node is offline, or no poll completed yet, or upstream fetch failed, or upstream 5xx error, or empty nodes
+- `200` - All **non-ignored** nodes are online (onlineCount === consideredNodes > 0)
+- `503` - At least one non-ignored node is offline, or no poll completed yet, or upstream fetch failed, or upstream 5xx error, or empty nodes, or all nodes ignored
 - `502` - Upstream returned 200 but JSON-RPC error or invalid result
 - `404` - Upstream returned 404
 - `400` - Upstream returned 400
 - `401` - Upstream returned 401 or 403
+
+**Note:** Nodes in groups specified by `IGNORE_GROUPS` are excluded from status calculations.
 
 **Response Body:**
 ```json
@@ -165,10 +187,21 @@ Main status endpoint. Returns HTTP status code based on latest poll result.
   "status": "all_online",
   "lastCheckedAt": "2025-12-30T12:34:56.789Z",
   "onlineCount": 5,
-  "totalNodes": 5,
-  "offlineUuids": []
+  "totalNodes": 7,
+  "offlineUuids": [],
+  "ignoredCount": 2,
+  "ignoredUuids": ["uuid-maintenance-1", "uuid-maintenance-2"]
 }
 ```
+
+**Response Fields:**
+- `status` - Status string (see Status Values below)
+- `lastCheckedAt` - ISO timestamp of last poll
+- `onlineCount` - Number of online nodes (excluding ignored)
+- `totalNodes` - Total number of nodes (including ignored)
+- `offlineUuids` - Array of UUIDs for offline nodes (excluding ignored)
+- `ignoredCount` - Number of nodes in ignored groups
+- `ignoredUuids` - Array of UUIDs for ignored nodes
 
 **Status Values:**
 - `all_online` - All nodes are online (200)
@@ -202,10 +235,12 @@ Debug endpoint. Returns full internal poll state.
   "rpcError": null,
   "fetchError": null,
   "nodesOnlineSummary": {
-    "totalNodes": 5,
-    "onlineCount": 4,
+    "totalNodes": 7,
+    "onlineCount": 5,
     "offlineCount": 1,
-    "offlineUuids": ["uuid-123"]
+    "offlineUuids": ["uuid-123"],
+    "ignoredCount": 2,
+    "ignoredUuids": ["uuid-maintenance-1", "uuid-maintenance-2"]
   },
   "computedBaseStatus": 503
 }
