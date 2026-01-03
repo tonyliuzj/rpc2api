@@ -10,7 +10,7 @@ const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '5000', 10);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const API_KEY = process.env.API_KEY;
 const COOKIE = process.env.COOKIE;
-const IGNORE_GROUPS = process.env.IGNORE_GROUPS ? process.env.IGNORE_GROUPS.split(',').map(g => g.trim().toLowerCase()) : [];
+const IGNORE_GROUPS = process.env.IGNORE_GROUPS ? process.env.IGNORE_GROUPS.split(',').map(g => g.trim()) : [];
 
 // Validate required configuration
 if (!BASE_API_URL) {
@@ -187,7 +187,7 @@ async function pollUpstreamAPI() {
 
         // Check if node's group should be ignored using the nodeGroupMap
         const nodeGroup = nodeGroupMap[uuid];
-        if (IGNORE_GROUPS.length > 0 && nodeGroup && IGNORE_GROUPS.includes(nodeGroup.toLowerCase())) {
+        if (IGNORE_GROUPS.length > 0 && nodeGroup && IGNORE_GROUPS.includes(nodeGroup)) {
           ignoredUuids.push(uuid);
           continue; // Skip this node
         }
