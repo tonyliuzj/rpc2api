@@ -2,28 +2,6 @@
 
 A simple Node.js web service that continuously polls a Komari JSON-RPC2 API and exposes HTTP endpoints whose status codes reflect the health of monitored nodes.
 
-## Why This Project?
-
-This service solves a common monitoring challenge: **checking the health of multiple Komari nodes with a single HTTP call**.
-
-Instead of making individual JSON-RPC2 calls to check each node's status, this service:
-- Continuously polls the Komari RPC2 API in the background
-- Aggregates the status of all monitored nodes
-- Exposes a simple HTTP endpoint that returns status codes based on overall health
-- Enables easy integration with uptime monitoring tools (UptimeRobot, Pingdom, etc.)
-
-**Use Case**: Monitor dozens of Komari nodes with one uptime check instead of configuring individual monitors for each node. The service returns HTTP 200 only when ALL nodes are online, making it perfect for alerting when any node goes down.
-
-## Features
-
-- Polls a JSON-RPC2 API at configurable intervals
-- Exposes HTTP status codes based on node health
-- Returns 200 only when ALL nodes are online
-- Returns 503 when any node is offline or upstream errors occur
-- Handles various upstream error conditions (404, 401, 5xx, etc.)
-- Supports Bearer token and Cookie authentication
-- Provides health check and debug endpoints
-
 ## Installation
 
 Clone the repository:
