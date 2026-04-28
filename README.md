@@ -43,26 +43,27 @@ PORT=3000
 # Optional: Cookie for cookie-based authentication
 # COOKIE=session=your_session_cookie_here
 
-# Optional: Comma-separated list of group names to ignore
-# Nodes in these groups will be excluded from status calculations
-# IGNORE_GROUPS=maintenance,testing
+# Optional: Comma-separated list of group names to monitor
+# When set, only nodes in these groups are included in status calculations
+# GROUPS=production,critical
 ```
 
-### IGNORE_GROUPS Feature
+### GROUPS Feature
 
-The `IGNORE_GROUPS` configuration allows you to exclude specific groups of nodes from health status calculations. This is useful when:
-- Nodes are under maintenance
-- Testing nodes that shouldn't affect production status
-- Temporarily excluding problematic nodes without removing them
+The `GROUPS` configuration allows you to monitor only specific groups of nodes. This is useful when:
+- Only production groups should affect service health
+- Testing or maintenance groups should not affect public status
+- You want one instance of the service per monitored group set
 
 **How it works:**
-- Specify group names as a comma-separated list (e.g., `IGNORE_GROUPS=maintenance,testing`)
-- Any node with a `group` field matching one of these names will be ignored
-- Ignored nodes are excluded from online/offline counts
-- The service returns 200 only if all **non-ignored** nodes are online
-- Ignored nodes are tracked separately in the response (`ignoredCount`, `ignoredUuids`)
+- Specify group names as a comma-separated list (e.g., `GROUPS=production,critical`)
+- If `GROUPS` is unset or empty, all nodes are monitored
+- If `GROUPS` is set, only nodes with a matching `group` field are monitored
+- Nodes outside the selected groups are excluded from online/offline counts
+- The service returns 200 only if all **monitored** nodes are online
+- Unmonitored nodes are tracked separately in the response (`unmonitoredCount`, `unmonitoredUuids`)
 
-**Example:** If you have 10 nodes total, 2 in the "maintenance" group (offline), and 8 others (all online), setting `IGNORE_GROUPS=maintenance` will result in HTTP 200 status instead of 503.
+**Example:** If you have 10 nodes total, 8 in the "production" group (all online), and 2 in the "maintenance" group (offline), setting `GROUPS=production` will result in HTTP 200 status instead of 503.
 
 ## Running the Service
 
@@ -150,14 +151,14 @@ Follow the instructions provided by the `pm2 startup` command (it will give you 
 Main status endpoint. Returns HTTP status code based on latest poll result.
 
 **Status Code Rules:**
-- `200` - All **non-ignored** nodes are online (onlineCount === consideredNodes > 0)
-- `503` - At least one non-ignored node is offline, or no poll completed yet, or upstream fetch failed, or upstream 5xx error, or empty nodes, or all nodes ignored
+- `200` - All **monitored** nodes are online (onlineCount === monitoredCount > 0)
+- `503` - At least one monitored node is offline, or no poll completed yet, or upstream fetch failed, or upstream 5xx error, or empty nodes, or no nodes matched `GROUPS`
 - `502` - Upstream returned 200 but JSON-RPC error or invalid result
 - `404` - Upstream returned 404
 - `400` - Upstream returned 400
 - `401` - Upstream returned 401 or 403
 
-**Note:** Nodes in groups specified by `IGNORE_GROUPS` are excluded from status calculations.
+**Note:** When `GROUPS` is set, nodes outside the configured groups are excluded from status calculations.
 
 **Response Body:**
 ```json
@@ -165,25 +166,28 @@ Main status endpoint. Returns HTTP status code based on latest poll result.
   "status": "all_online",
   "lastCheckedAt": "2025-12-30T12:34:56.789Z",
   "onlineCount": 5,
+  "monitoredCount": 5,
   "totalNodes": 7,
   "offlineUuids": [],
-  "ignoredCount": 2,
-  "ignoredUuids": ["uuid-maintenance-1", "uuid-maintenance-2"]
+  "unmonitoredCount": 2,
+  "unmonitoredUuids": ["uuid-maintenance-1", "uuid-maintenance-2"]
 }
 ```
 
 **Response Fields:**
 - `status` - Status string (see Status Values below)
 - `lastCheckedAt` - ISO timestamp of last poll
-- `onlineCount` - Number of online nodes (excluding ignored)
-- `totalNodes` - Total number of nodes (including ignored)
-- `offlineUuids` - Array of UUIDs for offline nodes (excluding ignored)
-- `ignoredCount` - Number of nodes in ignored groups
-- `ignoredUuids` - Array of UUIDs for ignored nodes
+- `onlineCount` - Number of online monitored nodes
+- `monitoredCount` - Number of monitored nodes
+- `totalNodes` - Total number of nodes
+- `offlineUuids` - Array of UUIDs for offline monitored nodes
+- `unmonitoredCount` - Number of nodes outside the configured `GROUPS`
+- `unmonitoredUuids` - Array of UUIDs for unmonitored nodes
 
 **Status Values:**
-- `all_online` - All nodes are online (200)
-- `some_offline` - One or more nodes are offline (503)
+- `all_online` - All monitored nodes are online (200)
+- `some_offline` - One or more monitored nodes are offline (503)
+- `no_monitored_nodes` - `GROUPS` is set but no nodes matched it (503)
 - `upstream_error` - Network/timeout error (503)
 - `rpc_error` - JSON-RPC error (502)
 - `error` - Other error condition
@@ -213,12 +217,13 @@ Debug endpoint. Returns full internal poll state.
   "rpcError": null,
   "fetchError": null,
   "nodesOnlineSummary": {
-    "totalNodes": 7,
+    "totalNodes": 8,
+    "monitoredCount": 6,
     "onlineCount": 5,
     "offlineCount": 1,
     "offlineUuids": ["uuid-123"],
-    "ignoredCount": 2,
-    "ignoredUuids": ["uuid-maintenance-1", "uuid-maintenance-2"]
+    "unmonitoredCount": 2,
+    "unmonitoredUuids": ["uuid-maintenance-1", "uuid-maintenance-2"]
   },
   "computedBaseStatus": 503
 }
@@ -226,9 +231,9 @@ Debug endpoint. Returns full internal poll state.
 
 ## Upstream API Details
 
-The service polls the JSON-RPC2 endpoint at `{BASE_API_URL}/api/rpc2` with:
+The service polls the JSON-RPC2 endpoint at `{BASE_API_URL}/api/rpc2`. Each poll calls `common:getNodes` for group metadata, then `common:getNodesLatestStatus` for node status.
 
-**Request:**
+**Status Request:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -259,7 +264,8 @@ Each poll logs output in the format:
 [2025-12-30T12:34:56.789Z] Poll completed: {
   status: 'all_online',
   upstreamHttpStatus: 200,
-  nodes: '5/5 online',
+  nodes: '5/5 monitored online',
+  totalNodes: 7,
   computedBaseStatus: 200,
   error: null
 }

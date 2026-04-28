@@ -10,7 +10,7 @@ const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '5000', 10);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const API_KEY = process.env.API_KEY;
 const COOKIE = process.env.COOKIE;
-const IGNORE_GROUPS = process.env.IGNORE_GROUPS ? process.env.IGNORE_GROUPS.split(',').map(g => g.trim()) : [];
+const GROUPS = process.env.GROUPS ? process.env.GROUPS.split(',').map(g => g.trim()).filter(Boolean) : [];
 
 // Validate required configuration
 if (!BASE_API_URL) {
@@ -26,11 +26,12 @@ let latestPollData = {
   fetchError: null,
   nodesOnlineSummary: {
     totalNodes: 0,
+    monitoredCount: 0,
     onlineCount: 0,
     offlineCount: 0,
     offlineUuids: [],
-    ignoredCount: 0,
-    ignoredUuids: []
+    unmonitoredCount: 0,
+    unmonitoredUuids: []
   },
   computedBaseStatus: 503 // Default to 503 until first poll completes
 };
@@ -168,9 +169,12 @@ async function pollUpstreamAPI() {
         // Empty result
         latestPollData.nodesOnlineSummary = {
           totalNodes: 0,
+          monitoredCount: 0,
           onlineCount: 0,
           offlineCount: 0,
-          offlineUuids: []
+          offlineUuids: [],
+          unmonitoredCount: 0,
+          unmonitoredUuids: []
         };
         latestPollData.computedBaseStatus = 503;
         logPollResult('no_nodes');
@@ -178,19 +182,22 @@ async function pollUpstreamAPI() {
       }
 
       // Count online/offline nodes
+      let monitoredCount = 0;
       let onlineCount = 0;
       const offlineUuids = [];
-      const ignoredUuids = [];
+      const unmonitoredUuids = [];
 
       for (const uuid of uuids) {
         const node = result[uuid];
 
-        // Check if node's group should be ignored using the nodeGroupMap
+        // When GROUPS is set, only nodes in those groups are monitored.
         const nodeGroup = nodeGroupMap[uuid];
-        if (IGNORE_GROUPS.length > 0 && nodeGroup && IGNORE_GROUPS.includes(nodeGroup)) {
-          ignoredUuids.push(uuid);
+        if (GROUPS.length > 0 && (!nodeGroup || !GROUPS.includes(nodeGroup))) {
+          unmonitoredUuids.push(uuid);
           continue; // Skip this node
         }
+
+        monitoredCount++;
 
         if (node.online === true) {
           onlineCount++;
@@ -199,24 +206,23 @@ async function pollUpstreamAPI() {
         }
       }
 
-      const consideredNodes = totalNodes - ignoredUuids.length;
-      const offlineCount = consideredNodes - onlineCount;
+      const offlineCount = monitoredCount - onlineCount;
 
       latestPollData.nodesOnlineSummary = {
         totalNodes,
+        monitoredCount,
         onlineCount,
         offlineCount,
         offlineUuids,
-        ignoredCount: ignoredUuids.length,
-        ignoredUuids
+        unmonitoredCount: unmonitoredUuids.length,
+        unmonitoredUuids
       };
 
-      // Determine status: 200 only if ALL considered nodes are online
-      if (consideredNodes === 0) {
-        // All nodes are ignored
+      // Determine status: 200 only if ALL monitored nodes are online
+      if (monitoredCount === 0) {
         latestPollData.computedBaseStatus = 503;
-        logPollResult('all_nodes_ignored');
-      } else if (onlineCount === consideredNodes) {
+        logPollResult('no_monitored_nodes');
+      } else if (onlineCount === monitoredCount) {
         latestPollData.computedBaseStatus = 200;
         logPollResult('all_online');
       } else {
@@ -247,7 +253,8 @@ function logPollResult(statusString) {
   console.log(`[${lastCheckedAt}] Poll completed:`, {
     status: statusString,
     upstreamHttpStatus,
-    nodes: `${nodesOnlineSummary.onlineCount}/${nodesOnlineSummary.totalNodes} online`,
+    nodes: `${nodesOnlineSummary.onlineCount}/${nodesOnlineSummary.monitoredCount} monitored online`,
+    totalNodes: nodesOnlineSummary.totalNodes,
     computedBaseStatus,
     error: fetchError || (rpcError ? JSON.stringify(rpcError) : null)
   });
@@ -285,6 +292,8 @@ app.get('/', (req, res) => {
     statusString = 'rpc_error';
   } else if (nodesOnlineSummary.offlineCount > 0) {
     statusString = 'some_offline';
+  } else if (nodesOnlineSummary.monitoredCount === 0 && nodesOnlineSummary.totalNodes > 0) {
+    statusString = 'no_monitored_nodes';
   } else {
     statusString = 'error';
   }
@@ -293,8 +302,11 @@ app.get('/', (req, res) => {
     status: statusString,
     lastCheckedAt,
     onlineCount: nodesOnlineSummary.onlineCount,
+    monitoredCount: nodesOnlineSummary.monitoredCount,
     totalNodes: nodesOnlineSummary.totalNodes,
-    offlineUuids: nodesOnlineSummary.offlineUuids
+    offlineUuids: nodesOnlineSummary.offlineUuids,
+    unmonitoredCount: nodesOnlineSummary.unmonitoredCount,
+    unmonitoredUuids: nodesOnlineSummary.unmonitoredUuids
   });
 });
 
@@ -324,7 +336,7 @@ app.listen(PORT, () => {
   console.log(`  - POLL_INTERVAL_MS: ${POLL_INTERVAL_MS}`);
   console.log(`  - API_KEY: ${API_KEY ? '***set***' : 'not set'}`);
   console.log(`  - COOKIE: ${COOKIE ? '***set***' : 'not set'}`);
-  console.log(`  - IGNORE_GROUPS: ${IGNORE_GROUPS.length > 0 ? IGNORE_GROUPS.join(', ') : 'none'}`);
+  console.log(`  - GROUPS: ${GROUPS.length > 0 ? GROUPS.join(', ') : 'all'}`);
   console.log('');
 
   // Start polling
